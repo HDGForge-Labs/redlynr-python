@@ -14,6 +14,12 @@ import urllib.error
 import urllib.request
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+try:
+    import requests as _requests_lib
+    _REQUESTS_AVAILABLE = True
+except ImportError:
+    _REQUESTS_AVAILABLE = False
+
 from .exceptions import RedlynrBlocked, RedlynrError, RedlynrSlowDown
 from .state import ChainState
 
@@ -64,6 +70,7 @@ class RedlynrClient:
         cost_fn: Optional[Callable[[str, Dict], float]] = None,
         raise_on_slow_down: bool = False,
         trial_token: Optional[str] = None,
+        session: Optional[Any] = None,
     ) -> None:
         """
         Args:
@@ -92,6 +99,13 @@ class RedlynrClient:
             trial_token: PoW trial token for free-tier access. Obtained via
                 GET /trial/challenge → solve SHA-256 → POST /trial/claim.
                 Sent as X-Trial-Token header. 30 calls granted per token.
+            session: Optional requests.Session wrapped with x402 payment
+                support (e.g. via wrapRequestsWithPayment). When provided,
+                all /run calls are made through this session so x402 payments
+                are handled automatically. All other endpoints (/register,
+                /policy, /audit, /reset, /pause) remain on urllib and are
+                unaffected. Mutually exclusive with trial_token — if both are
+                supplied, session takes precedence for /run calls.
         """
         self.base_url = base_url.rstrip("/")
         self.tenant_id = tenant_id
@@ -103,6 +117,7 @@ class RedlynrClient:
         self.cost_fn = cost_fn
         self.raise_on_slow_down = raise_on_slow_down
         self.trial_token = trial_token
+        self.session = session
 
         # In-process chain state tracker — no external dependencies.
         self._state = ChainState()
@@ -437,6 +452,20 @@ class RedlynrClient:
     # ------------------------------------------------------------------
 
     def _run(self, payload: Dict) -> Dict:
+        if self.session is not None:
+            # Use the caller-supplied session (e.g. x402-wrapped) for /run.
+            url = self.base_url + "/run"
+            try:
+                resp = self.session.post(url, json=payload, timeout=15)
+                if resp.status_code != 200:
+                    raise RedlynrError(
+                        f"HTTP {resp.status_code} from {url}: {resp.text[:200]}"
+                    )
+                return resp.json()
+            except RedlynrError:
+                raise
+            except Exception as e:
+                raise RedlynrError(f"Session error posting to {url}: {e}") from e
         return _post(
             self.base_url + "/run",
             payload,

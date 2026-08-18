@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "redlynr"
-version = "0.1.0"
+version = "0.1.1"
 description = "Official Python SDK for the Redlynr agent guardrail service"
 readme = "README.md"
 license = { text = "MIT" }
